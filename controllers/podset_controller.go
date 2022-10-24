@@ -172,7 +172,7 @@ func newPodForCR(cr *appv1alpha1.PodSet) *corev1.Pod {
 		"app":     cr.Name,
 		"version": "v0.1",
 	}
-	yes := true
+	// yes := true
 	no := false
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -192,7 +192,7 @@ func newPodForCR(cr *appv1alpha1.PodSet) *corev1.Pod {
 						Capabilities: &corev1.Capabilities{
 							Drop: []corev1.Capability{"ALL"},
 						},
-						RunAsNonRoot: &yes,
+						// RunAsNonRoot: &yes,
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
