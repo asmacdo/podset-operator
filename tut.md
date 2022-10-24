@@ -118,7 +118,7 @@ Finally, remove the CRD.
 make uninstall
 ```
 
-## Adding fields to the API
+## Adding a field to the Spec
 
 In Kubernetes, every functional object (with some exceptions, i.e.
 ConfigMap) includes `spec` and `status`. Kubernetes functions by reconciling
@@ -192,16 +192,22 @@ func (r *PodSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 	log.Info(fmt.Sprintf("CR has specified %v replicas", instance.Spec.Replicas))
-
-	// TODO(user): your logic here
-
 	return ctrl.Result{}, nil
 }
 ```
-Next, we update the PodSetStatus to give the user information from the
-Operator. In our case, we want to know how many Pods are available, and
-what the Pod names are:
 
+If you forgot to cleanup after "Hello World", stop the controller with `CTRL+C`, delete the
+PodSet CR with `kubectl delete podset podset-sample`, and uninstall the
+PodSet CRD with `make uninstall`.
+
+Reinstall the updated CRD, start the controller with `make run`, and in
+another session, the CR with `kubectl apply -f config/samples/app_v1alpha1_podset.yaml`
+
+## Reporting back to the user with Status
+
+Our controller is now able to read values from the CR, now it is time to
+report back using the `PodSet.Status`. In our case, we want to know how
+many Pods are available, and what the Pod names are:
 
 ```
 // PodSetStatus defines the observed state of PodSet
@@ -210,6 +216,17 @@ type PodSetStatus struct {
 	AvailableReplicas int32    `json:"availableReplicas"`
 }
 ```
+
+
+
+
+
+
+
+
+
+
+
 
 
 
