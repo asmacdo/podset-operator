@@ -31,89 +31,150 @@ Note: Be sure to substitute your github handle for mhrivnak :)
 
 Now that we have the skeleton for a project, we need to create our API
 in the form of a Kubernetes Custom Resource Definition (CRD), as well as
-a controller to interact with that CRD. 
+a controller to interact with that CRD.
 
 `operator-sdk create api --group=app --version=v1alpha1 --kind=PodSet --resource --controller`
 
-We should now see the api, config, and controllers directories. Let’s
-begin by inspecting the newly generated api/v1alpha1/podset_types.go
-file for our PodSet API:
+We should now see the api, config, and controllers directories.
 
-`cat api/v1alpha1/podset_types.go`
+## Hello World!
+
+Let’s now observe the default `controllers/podset_controller.go` file,
+starting with `SetupWithManager`.
+
+```
+// SetupWithManager sets up the controller with the Manager.
+func (r *PodSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&appv1alpha1.PodSet{}).
+		Complete(r)
+}
+```
+
+For us, the key line is `For(&appv1alpha1.PodSet{})`, which causes the
+reconcile loop to be run each time a PodSet is created, updated, or deleted.
+
+Let's begin by logging "Hello World". Add `	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+` to the imports, and change the `Reconcile` function to:
+
+```
+func (r *PodSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := ctrllog.FromContext(ctx)
+	log.Info("Hello World")
+	return ctrl.Result{}, nil
+}
+```
+
+Next, we need to generate the CRD for a PodSet. We'll cover this in a
+moment. For now just run:
+
+```
+make manifests
+```
+
+Make sure the module requirements are installed.
+
+```
+go mod tidy
+```
+
+Now we are ready to run our most basic operator!
+
+Install the CRD (allowing PodSets to be created later) onto the cluster:
+
+```
+make install
+```
+
+Now run your operator locally
+
+```
+make run
+```
+
+You'll see it startup and then you'll see if we ;w were successful in
+the logs.
+
+```
+1.66662492348084e+09	INFO	Hello World	{"controller": "podset", "controllerGroup": "app.example.com", "controllerKind": "PodSet", "podSet": {"name":"podset-sample","namespace":"default"}, "namespace": "default", "name": "podset-sample", "reconcileID": "5ede544e-8244-461c-b738-9f803d60cc9b"}
+```
+
+Our first Operator has reconciled its first CR!
+
+### Cleanup
+
+You can stop a locally running Operator with `Ctrl+C`
+
+If you remove the CR, all of the objects created by its reconcile (none
+right now) are deleted.
+
+```
+kubectl delete -f config/samples/app_v1alpha1_podset.yaml
+```
+
+Finally, remove the CRD.
+
+```
+make uninstall
+```
+
+## Adding fields to the API
 
 In Kubernetes, every functional object (with some exceptions, i.e.
-ConfigMap) includes spec and status. Kubernetes functions by reconciling
+ConfigMap) includes `spec` and `status`. Kubernetes functions by reconciling
 desired state (Spec) with the actual cluster state. We then record what
 is observed (Status).
 
-Also observe the +kubebuilder comment markers found throughout the file.
+Go-based Operators are able to generate and regenerate some of the
+crucial files, so you don't have to! Let’s inspect one of the files we
+**are** supposed to change, `api/v1alpha1/podset_types.go` which defines
+the PodSet API for the auto-generation.
+
+`PodSetSpec` represents the desired state, (input comes from PodSet CR).
+Users will need to tell the Operator how many Pods we want, so lets add
+`Replicas`.
+
+```
+type PodSetSpec struct {
+	// Replicas is the desired number of pods for the PodSet
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=10
+	Replicas int32 `json:"replicas,omitempty"`
+}
+```
+
+Notice the `+kubebuilder` comment markers found throughout the file.
 Operator-SDK makes use of a tool called `controler-gen` (from the
 [controller-tools](https://github.com/kubernetes-sigs/controller-tools)
 project) for generating utility code and Kubernetes YAML. More
 information on markers for config/code generation can be found
 [here](https://book.kubebuilder.io/reference/markers.html).
 
-Let’s now modify the `PodSetSpec` and `PodSetStatus` of the PodSet Custom
-Resource (CR) at `api/v1alpha1/podset_types.go`.
 
-It should look like the file below:
+
+Next, we update the PodSetStatus to give the user information from the
+Operator. In our case, we want to know how many Pods are available, and
+what the Pod names are:
 
 ```
-package v1alpha1
-
-import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
-
-// PodSetSpec defines the desired state of PodSet
-type PodSetSpec struct {
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=10
-	Replicas int32 `json:"replicas,omitempty"`
-}
-
 // PodSetStatus defines the observed state of PodSet
 type PodSetStatus struct {
-	// Important: Run "make" to regenerate code after modifying this file
 	PodNames          []string `json:"podNames"`
 	AvailableReplicas int32    `json:"availableReplicas"`
 }
-
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-
-// PodSet is the Schema for the podsets API
-type PodSet struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   PodSetSpec   `json:"spec,omitempty"`
-	Status PodSetStatus `json:"status,omitempty"`
-}
-
-//+kubebuilder:object:root=true
-
-// PodSetList contains a list of PodSet
-type PodSetList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []PodSet `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&PodSet{}, &PodSetList{})
-}
 ```
 
-After modifying the `*_types.go` file, always run the following command
-to update the `zz_generated.deepcopy.go` file:
+TODO(asmacdo) link to full file for reference
+
+**Important**:
+Every time you modify a `*_types.go` file, you will need to update the
+generated files!
+
+Regenerate `zz_generated.deepcopy.go` with:
 
 `make generate`
 
-Now we can run the following command to generate our customized CRD and
-additional object YAMLs.
+Regenerate object YAMLs (including the CRDs!):
 
 `make manifests`
 
@@ -123,24 +184,6 @@ generated CRD YAML that reflects the `spec.replicas` and
 columns.
 
 `cat config/crd/bases/app.example.com_podsets.yaml`
-
-Deploy your PodSet Custom Resource Definition to the cluster:
-
-`kubectl apply -f config/crd/bases/app.example.com_podsets.yaml`
-
-Confirm the CRD was successfully created:
-
-`kubectl get crd podsets.app.example.com -o yaml`
-
-Let’s now observe the default `controllers/podset_controller.go` file:
-
-`cat controllers/podset_controller.go`
-
-This default controller requires additional logic so we can trigger our
-reconciler whenever kind: PodSet objects are added, updated, or deleted.
-We also want to trigger the reconciler whenever Pods owned by a given
-PodSet are added, updated, and deleted as well. To accomplish this. we
-modify the controller’s `SetupWithManager` method.
 
 Modify the PodSet controller logic at `controllers/podset_controller.go`:
 
