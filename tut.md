@@ -150,25 +150,8 @@ project) for generating utility code and Kubernetes YAML. More
 information on markers for config/code generation can be found
 [here](https://book.kubebuilder.io/reference/markers.html).
 
-
-
-Next, we update the PodSetStatus to give the user information from the
-Operator. In our case, we want to know how many Pods are available, and
-what the Pod names are:
-
-```
-// PodSetStatus defines the observed state of PodSet
-type PodSetStatus struct {
-	PodNames          []string `json:"podNames"`
-	AvailableReplicas int32    `json:"availableReplicas"`
-}
-```
-
-TODO(asmacdo) link to full file for reference
-
-**Important**:
-Every time you modify a `*_types.go` file, you will need to update the
-generated files!
+**Important: Every time you modify a `*_types.go` file, you will need to update the
+generated files!**
 
 Regenerate `zz_generated.deepcopy.go` with:
 
@@ -179,181 +162,56 @@ Regenerate object YAMLs (including the CRDs!):
 `make manifests`
 
 Thanks to our comment markers, observe that we now have a newly
-generated CRD YAML that reflects the `spec.replicas` and
-`status.podNames` OpenAPI v3 schema validation and customized print
-columns.
+generated CRD YAML that reflects the `spec.replicas` OpenAPI v3 schema
+validation and customized print columns.
 
 `cat config/crd/bases/app.example.com_podsets.yaml`
 
+Next, lets use our the `Replicas` field in our Reconcile loop.
 Modify the PodSet controller logic at `controllers/podset_controller.go`:
 
+
 ```
-package controllers
-
-import (
-	"context"
-	"reflect"
-
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
-
-	appv1alpha1 "github.com/redhat/podset-operator/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-)
-
-// PodSetReconciler reconciles a PodSet object
-type PodSetReconciler struct {
-	client.Client
-	Scheme *runtime.Scheme
-}
-
-//+kubebuilder:rbac:groups=app.example.com,resources=podsets,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=app.example.com,resources=podsets/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=app.example.com,resources=podsets/finalizers,verbs=update
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the PodSet object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *PodSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
+	log.Info("Hello World")
 
 	// Fetch the PodSet instance
 	instance := &appv1alpha1.PodSet{}
-	err := r.Get(context.TODO(), req.NamespacedName, instance)
+	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
-			// Return and don't requeue
+			// Request object not found; it could have been deleted after
+			// the reconcile request was queued. Owned objects (in our case,
+			// Pods) are automatically garbage collected, so there is nothing
+			// for us to do. Return and don't requeue.
 			return ctrl.Result{}, nil
 		}
-		// Error reading the object - requeue the request.
-		return ctrl.Result{}, err
-
-	}
-
-	// List all pods owned by this PodSet instance
-	podSet := instance
-	podList := &corev1.PodList{}
-	lbs := map[string]string{
-		"app":     podSet.Name,
-		"version": "v0.1",
-	}
-	labelSelector := labels.SelectorFromSet(lbs)
-	listOps := &client.ListOptions{Namespace: podSet.Namespace, LabelSelector: labelSelector}
-	if err = r.List(context.TODO(), podList, listOps); err != nil {
+		// Error reading the object. By returning an error, the library will log
+		// that error and requeue the resource with backoff logic.
 		return ctrl.Result{}, err
 	}
+	log.Info(fmt.Sprintf("CR has specified %v replicas", instance.Spec.Replicas))
 
-	// Count the pods that are pending or running as available
-	var available []corev1.Pod
-	for _, pod := range podList.Items {
-		if pod.ObjectMeta.DeletionTimestamp != nil {
-			continue
-		}
-		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-			available = append(available, pod)
-		}
-	}
-	numAvailable := int32(len(available))
-	availableNames := []string{}
-	for _, pod := range available {
-		availableNames = append(availableNames, pod.ObjectMeta.Name)
-	}
-
-	// Update the status if necessary
-	status := appv1alpha1.PodSetStatus{
-		PodNames:          availableNames,
-		AvailableReplicas: numAvailable,
-	}
-	if !reflect.DeepEqual(podSet.Status, status) {
-		podSet.Status = status
-		err = r.Status().Update(context.TODO(), podSet)
-		if err != nil {
-			log.Error(err, "Failed to update PodSet status")
-			return ctrl.Result{}, err
-		}
-	}
-
-	if numAvailable > podSet.Spec.Replicas {
-		log.Info("Scaling down pods", "Currently available", numAvailable, "Required replicas", podSet.Spec.Replicas)
-		diff := numAvailable - podSet.Spec.Replicas
-		dpods := available[:diff]
-		for _, dpod := range dpods {
-			err = r.Delete(context.TODO(), &dpod)
-			if err != nil {
-				log.Error(err, "Failed to delete pod", "pod.name", dpod.Name)
-				return ctrl.Result{}, err
-			}
-		}
-		return ctrl.Result{Requeue: true}, nil
-	}
-
-	if numAvailable < podSet.Spec.Replicas {
-		log.Info("Scaling up pods", "Currently available", numAvailable, "Required replicas", podSet.Spec.Replicas)
-		// Define a new Pod object
-		pod := newPodForCR(podSet)
-		// Set PodSet instance as the owner and controller
-		if err := controllerutil.SetControllerReference(podSet, pod, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
-		err = r.Create(context.TODO(), pod)
-		if err != nil {
-			log.Error(err, "Failed to create pod", "pod.name", pod.Name)
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{Requeue: true}, nil
-	}
+	// TODO(user): your logic here
 
 	return ctrl.Result{}, nil
 }
+```
+Next, we update the PodSetStatus to give the user information from the
+Operator. In our case, we want to know how many Pods are available, and
+what the Pod names are:
 
-// newPodForCR returns a busybox pod with the same name/namespace as the cr
-func newPodForCR(cr *appv1alpha1.PodSet) *corev1.Pod {
-	labels := map[string]string{
-		"app":     cr.Name,
-		"version": "v0.1",
-	}
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: cr.Name + "-pod",
-			Namespace:    cr.Namespace,
-			Labels:       labels,
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    "busybox",
-					Image:   "busybox",
-					Command: []string{"sleep", "3600"},
-				},
-			},
-		},
-	}
-}
-
-// SetupWithManager sets up the controller with the Manager.
-func (r *PodSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&appv1alpha1.PodSet{}).
-		Owns(&corev1.Pod{}).
-		Complete(r)
-}
 
 ```
+// PodSetStatus defines the observed state of PodSet
+type PodSetStatus struct {
+	PodNames          []string `json:"podNames"`
+	AvailableReplicas int32    `json:"availableReplicas"`
+}
+```
+
+
 
 You can easily update this file by running the following command:
 
