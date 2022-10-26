@@ -171,5 +171,6 @@ func newPodForCR(cr *podsetv1alpha1.PodSet) *corev1.Pod {
 func (r *PodSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&podsetv1alpha1.PodSet{}).
+		Owns(&corev1.Pod{}).
 		Complete(r)
 }
